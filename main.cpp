@@ -18,14 +18,17 @@ static const float c_pi = 3.14159265359f;
 
 inline pcg32_random_t GetRNG()
 {
+    static uint64_t s_sequence = 0;
+    s_sequence++;
+
     pcg32_random_t rng;
 #if DETERMINISTIC()
-    pcg32_srandom_r(&rng, 0x1337FEED, 0);
+    pcg32_srandom_r(&rng, 0x1337FEED, s_sequence);
 #else
     std::random_device device;
     std::mt19937 generator(device());
     std::uniform_int_distribution<uint32_t> dist;
-    pcg32_srandom_r(&rng, dist(generator), 0);
+    pcg32_srandom_r(&rng, dist(generator), s_sequence);
 #endif
     return rng;
 }
@@ -64,9 +67,18 @@ std::vector<float> Sequence_Stratified(size_t numSamples)
 
 std::vector<float> Sequence_GoldenRatio(size_t numSamples)
 {
-    pcg32_random_t rng = GetRNG();
     std::vector<float> ret(numSamples);
     ret[0] = 0.0f;
+    for (size_t index = 1; index < numSamples; ++index)
+        ret[index] = fmodf(ret[index - 1] + c_goldenRatioConjugate, 1.0f);
+    return ret;
+}
+
+std::vector<float> Sequence_GoldenRatioJittered(size_t numSamples)
+{
+    pcg32_random_t rng = GetRNG();
+    std::vector<float> ret(numSamples);
+    ret[0] = RandomFloat01(rng);
     for (size_t index = 1; index < numSamples; ++index)
         ret[index] = fmodf(ret[index - 1] + c_goldenRatioConjugate, 1.0f);
     return ret;
@@ -100,8 +112,11 @@ struct Sequence
     const char* name = nullptr;
     std::vector<float>(*fn)(size_t numSamples) = nullptr;
     std::vector<float> sequence;
-    std::vector<float> results;
-    std::vector<float> error;
+    std::vector<float> resultsSingle;
+    std::vector<float> errorSingle;
+
+    std::vector<float> avgError;
+    std::vector<float> avgSquaredError;
 };
 
 struct Function
@@ -121,6 +136,7 @@ int main(int argc, char** argv)
         {"Regular", Sequence_Regular},
         {"Stratified", Sequence_Stratified},
         {"GoldenRatio", Sequence_GoldenRatio},
+        {"GoldenRatioJittered", Sequence_GoldenRatioJittered},
     };
 
     Function functions[] =
@@ -133,14 +149,16 @@ int main(int argc, char** argv)
     // for each function
     for (size_t functionIndex = 0; functionIndex < _countof(functions); ++functionIndex)
     {
-        // TODO: do multiple tests and keep track of mean and stddev.
-        //c_numtests
-
         // for each sequence
         for (size_t sequenceIndex = 0; sequenceIndex < _countof(sequences); ++sequenceIndex)
         {
-            sequences[sequenceIndex].results.resize(c_numSamples, 0.0f);
-            sequences[sequenceIndex].error.resize(c_numSamples, 0.0f);
+            sequences[sequenceIndex].resultsSingle.resize(c_numSamples, 0.0f);
+            sequences[sequenceIndex].errorSingle.resize(c_numSamples, 0.0f);
+            sequences[sequenceIndex].avgError.resize(c_numSamples, 0.0f);
+            sequences[sequenceIndex].avgSquaredError.resize(c_numSamples, 0.0f);
+
+            // TODO: do multiple tests and keep track of mean and stddev.
+            //c_numtests
 
             // for each number of samples to test
             for (size_t sampleCount = 0; sampleCount < c_numSamples; ++sampleCount)
@@ -157,10 +175,10 @@ int main(int argc, char** argv)
                 }
 
                 // store the result
-                sequences[sequenceIndex].results[sampleCount] = y;
+                sequences[sequenceIndex].resultsSingle[sampleCount] = y;
 
                 // and the error
-                sequences[sequenceIndex].error[sampleCount] = std::abs(y - functions[functionIndex].actualValue);
+                sequences[sequenceIndex].errorSingle[sampleCount] = std::abs(y - functions[functionIndex].actualValue);
             }
         }
 
@@ -183,7 +201,7 @@ int main(int argc, char** argv)
             size_t sampleCount = std::min(size_t(percent * float(c_numSamples)), c_numSamples - 1);
             fprintf(file, "\"%i\"", (int)sampleCount+1);
             for (size_t sequenceIndex = 0; sequenceIndex < _countof(sequences); ++sequenceIndex)
-                fprintf(file, ",\"%f\"", sequences[sequenceIndex].error[sampleCount]);
+                fprintf(file, ",\"%f\"", sequences[sequenceIndex].errorSingle[sampleCount]);
             fprintf(file, "\n");
         }
 
@@ -200,7 +218,7 @@ TODO:
   - this to verify golden ratio is good.
   - white and stratified probably need a mean and variance (std dev) on the plot, so should happen many times.
 
-- even if you do 100 million samples, maybe only report 100 results.
+? should we jitter golden ratio? not sure if it will matter. maybe compare golden ratio against jittered golden ratio...
 
 Blog:
 * motivation: golden ratio is better sampling. having it in sorted order is better for cache, and better for ray marching, to composite things properly.
