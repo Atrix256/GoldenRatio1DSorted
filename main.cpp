@@ -7,8 +7,8 @@
 
 #define DETERMINISTIC() false
 
-static const size_t c_numSamples = 1000;
-static const size_t c_numtests = 100;
+static const size_t c_numSamples = 100;
+static const size_t c_numtests = 10000;
 
 // 1/goldenRatio
 // or goldenRatio-1
@@ -49,10 +49,19 @@ std::vector<float> Sequence_WhiteNoise(size_t numSamples)
 
 std::vector<float> Sequence_Regular(size_t numSamples)
 {
-    pcg32_random_t rng = GetRNG();
     std::vector<float> ret(numSamples);
     for (size_t index = 0; index < numSamples; ++index)
-        ret[index] = float(index) / float(numSamples);
+        ret[index] = (float(index) + 0.5f) / float(numSamples);
+    return ret;
+}
+
+std::vector<float> Sequence_RegularRandomoffset(size_t numSamples)
+{
+    pcg32_random_t rng = GetRNG();
+    float offset = RandomFloat01(rng);
+    std::vector<float> ret(numSamples);
+    for (size_t index = 0; index < numSamples; ++index)
+        ret[index] = std::fmodf(offset + float(index) / float(numSamples), 1.0f);
     return ret;
 }
 
@@ -74,7 +83,7 @@ std::vector<float> Sequence_GoldenRatio(size_t numSamples)
     return ret;
 }
 
-std::vector<float> Sequence_GoldenRatioJittered(size_t numSamples)
+std::vector<float> Sequence_GoldenRatioRandomOffset(size_t numSamples)
 {
     pcg32_random_t rng = GetRNG();
     std::vector<float> ret(numSamples);
@@ -104,16 +113,11 @@ float Lerp(float A, float B, float t)
     return A * (1.0f - t) + B * t;
 }
 
-// TODO: golden ratio sequence.
-// TODO: spit out CSVs and graph with python or open office.
-
 struct Sequence
 {
     const char* name = nullptr;
     std::vector<float>(*fn)(size_t numSamples) = nullptr;
     std::vector<float> sequence;
-    std::vector<float> resultsSingle;
-    std::vector<float> errorSingle;
 
     std::vector<float> avgError;
     std::vector<float> avgSquaredError;
@@ -134,9 +138,10 @@ int main(int argc, char** argv)
     {
         {"Uniform", Sequence_WhiteNoise},
         {"Regular", Sequence_Regular},
+        {"RegularRandomOffset", Sequence_RegularRandomoffset},
         {"Stratified", Sequence_Stratified},
         {"GoldenRatio", Sequence_GoldenRatio},
-        {"GoldenRatioJittered", Sequence_GoldenRatioJittered},
+        {"GoldenRatioRandomoffset", Sequence_GoldenRatioRandomOffset},
     };
 
     Function functions[] =
@@ -149,37 +154,46 @@ int main(int argc, char** argv)
     // for each function
     for (size_t functionIndex = 0; functionIndex < _countof(functions); ++functionIndex)
     {
+        printf("%s\n", functions[functionIndex].name);
+
         // for each sequence
         for (size_t sequenceIndex = 0; sequenceIndex < _countof(sequences); ++sequenceIndex)
         {
-            sequences[sequenceIndex].resultsSingle.resize(c_numSamples, 0.0f);
-            sequences[sequenceIndex].errorSingle.resize(c_numSamples, 0.0f);
             sequences[sequenceIndex].avgError.resize(c_numSamples, 0.0f);
             sequences[sequenceIndex].avgSquaredError.resize(c_numSamples, 0.0f);
 
-            // TODO: do multiple tests and keep track of mean and stddev.
-            //c_numtests
-
-            // for each number of samples to test
-            for (size_t sampleCount = 0; sampleCount < c_numSamples; ++sampleCount)
+            // for each test
+            int lastPercent = -1;
+            for (size_t testIndex = 0; testIndex < c_numtests; ++testIndex)
             {
-                // generate the samples
-                sequences[sequenceIndex].sequence = sequences[sequenceIndex].fn(sampleCount + 1);
-
-                // integrate
-                float y = 0.0f;
-                for (size_t index = 0; index < sampleCount; ++index)
+                int percent = int(100.0f * float(testIndex) / float(c_numtests - 1));
+                if (lastPercent != percent)
                 {
-                    float x = sequences[sequenceIndex].sequence[index];
-                    y = Lerp(y, functions[functionIndex].fn(x), 1.0f / float(index + 1));
+                    lastPercent = percent;
+                    printf("\r    %s: %i%%", sequences[sequenceIndex].name, percent);
                 }
 
-                // store the result
-                sequences[sequenceIndex].resultsSingle[sampleCount] = y;
+                // for each number of samples to test
+                for (size_t sampleCount = 0; sampleCount < c_numSamples; ++sampleCount)
+                {
+                    // generate the samples
+                    sequences[sequenceIndex].sequence = sequences[sequenceIndex].fn(sampleCount + 1);
 
-                // and the error
-                sequences[sequenceIndex].errorSingle[sampleCount] = std::abs(y - functions[functionIndex].actualValue);
+                    // integrate
+                    float y = 0.0f;
+                    for (size_t index = 0; index < sampleCount; ++index)
+                    {
+                        float x = sequences[sequenceIndex].sequence[index];
+                        y = Lerp(y, functions[functionIndex].fn(x), 1.0f / float(index + 1));
+                    }
+
+                    // update the avgError and avgSquaredError;
+                    float error = y - functions[functionIndex].actualValue;
+                    sequences[sequenceIndex].avgError[sampleCount] = Lerp(sequences[sequenceIndex].avgError[sampleCount], error, 1.0f / float(testIndex + 1));
+                    sequences[sequenceIndex].avgSquaredError[sampleCount] = Lerp(sequences[sequenceIndex].avgSquaredError[sampleCount], error * error, 1.0f / float(testIndex + 1));
+                }
             }
+            printf("\r    %s: 100%%\n", sequences[sequenceIndex].name);
         }
 
         // Open the CSV file for writing
@@ -201,7 +215,7 @@ int main(int argc, char** argv)
             size_t sampleCount = std::min(size_t(percent * float(c_numSamples)), c_numSamples - 1);
             fprintf(file, "\"%i\"", (int)sampleCount+1);
             for (size_t sequenceIndex = 0; sequenceIndex < _countof(sequences); ++sequenceIndex)
-                fprintf(file, ",\"%f\"", sequences[sequenceIndex].errorSingle[sampleCount]);
+                fprintf(file, ",\"%f\"", std::sqrt(sequences[sequenceIndex].avgSquaredError[sampleCount]));
             fprintf(file, "\n");
         }
 
@@ -213,16 +227,23 @@ int main(int argc, char** argv)
 }
 
 /*
-TODO:
-- convergence graphs of stratified, white noise, golden ratio 1d. on sine, step, triangle.
-  - this to verify golden ratio is good.
-  - white and stratified probably need a mean and variance (std dev) on the plot, so should happen many times.
-
-? should we jitter golden ratio? not sure if it will matter. maybe compare golden ratio against jittered golden ratio...
-
 Blog:
+* show the functions too. have google or wolfram graph em.
+* NOTE: csv has root mean squared error, per this blog post: https://blog.demofox.org/2021/04/01/mean-squared-error-is-variance/
 * motivation: golden ratio is better sampling. having it in sorted order is better for cache, and better for ray marching, to composite things properly.
 * Show the right way to do it, show that it works.
 * show your failed attempt and the things you found along the way
+* log/log plots are in out.
+
+1d function analysis...
+* uniform white noise is not a great choice unsurprisingly
+* regular sampling is ok, but has aliasing problems.
+ * stratified converges at about the same rate but doesn't have the aliasing problems.
+ * Random offset regular sampling isn't bad. it seems to beat stratified?? except in step
+* random offset golden ratio is good. 
+* step function makes golden ratio and regular sampling go nuts.
+ * these functions are deterministic though so aren't getting anything from averaging a bunch of runs.
+
+! regular with a random offset is pretty decent! motivation for using blue noise that way.
 
 */
