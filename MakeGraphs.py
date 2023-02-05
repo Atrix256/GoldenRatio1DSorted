@@ -18,7 +18,7 @@ for fileName in fileNames:
     plt.ylabel('RMSE')
     plt.xlabel('Samples')
 
-    fig.axes[0].set_xscale('log', base=2)
+    fig.axes[0].set_xscale('log', base=10)
     fig.axes[0].set_yscale('log', base=2)
 
     fig.axes[0].get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
