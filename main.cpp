@@ -5,7 +5,7 @@
 
 #include "pcg/pcg_basic.h"
 
-#define DETERMINISTIC() false
+#define DETERMINISTIC() true
 
 static const size_t c_numSamples = 100;
 static const size_t c_numtests = 10000;
@@ -137,11 +137,11 @@ int main(int argc, char** argv)
     Sequence sequences[] =
     {
         {"Uniform", Sequence_WhiteNoise},
-        {"Regular", Sequence_Regular},
+        //{"Regular", Sequence_Regular},
         {"RegularRandomOffset", Sequence_RegularRandomoffset},
         {"Stratified", Sequence_Stratified},
-        {"GoldenRatio", Sequence_GoldenRatio},
-        {"GoldenRatioRandomoffset", Sequence_GoldenRatioRandomOffset},
+        //{"GoldenRatio", Sequence_GoldenRatio},
+        {"GoldenRatioRandomOffset", Sequence_GoldenRatioRandomOffset},
     };
 
     Function functions[] =
@@ -245,5 +245,6 @@ Blog:
  * these functions are deterministic though so aren't getting anything from averaging a bunch of runs.
 
 ! regular with a random offset is pretty decent! motivation for using blue noise that way.
+! removing "golden ratio" and "uniform" because they are cluttery and don't really belong, not a fair test.
 
 */
