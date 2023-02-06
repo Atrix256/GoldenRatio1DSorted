@@ -13,6 +13,7 @@ static const size_t c_numtests = 10000;
 // 1/goldenRatio
 // or goldenRatio-1
 static const float c_goldenRatioConjugate = 0.61803398875f;
+static const float c_smallGoldenRatioConjugate = 1.0f - c_goldenRatioConjugate;
 
 static const float c_pi = 3.14159265359f;
 
@@ -93,6 +94,16 @@ std::vector<float> Sequence_GoldenRatioRandomOffset(size_t numSamples)
     return ret;
 }
 
+std::vector<float> Sequence_SmallGoldenRatioRandomOffset(size_t numSamples)
+{
+    pcg32_random_t rng = GetRNG();
+    std::vector<float> ret(numSamples);
+    ret[0] = RandomFloat01(rng);
+    for (size_t index = 1; index < numSamples; ++index)
+        ret[index] = fmodf(ret[index - 1] + c_smallGoldenRatioConjugate, 1.0f);
+    return ret;
+}
+
 float Function_Sine(float x)
 {
     return sin(c_pi * x);
@@ -142,6 +153,7 @@ int main(int argc, char** argv)
         {"Stratified", Sequence_Stratified},
         //{"GoldenRatio", Sequence_GoldenRatio},
         {"GoldenRatioRandomOffset", Sequence_GoldenRatioRandomOffset},
+        //{"SmallGoldenRatioRandomOffset", Sequence_SmallGoldenRatioRandomOffset},  // 99.9% identical to GoldenRatioRandomOffset, omitting it
     };
 
     Function functions[] =
