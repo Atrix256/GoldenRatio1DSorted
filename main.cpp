@@ -10,10 +10,9 @@
 static const size_t c_numSamples = 100;
 static const size_t c_numtests = 10000;
 
-// 1/goldenRatio
-// or goldenRatio-1
-static const float c_goldenRatioConjugate = 0.61803398875f;
-static const float c_smallGoldenRatioConjugate = 1.0f - c_goldenRatioConjugate;
+static const float c_goldenRatio = 1.61803398875f;
+static const float c_goldenRatioConjugate = 0.61803398875f; // 1/goldenRatio or goldenRatio-1
+static const float c_smallGoldenRatioConjugate = 1.0f / (c_goldenRatio * c_goldenRatio);
 
 static const float c_pi = 3.14159265359f;
 
@@ -141,7 +140,7 @@ struct Function
     float actualValue = 0.0f;
 };
 
-int main(int argc, char** argv)
+void IntegrationTests()
 {
     _mkdir("out");
 
@@ -225,7 +224,7 @@ int main(int argc, char** argv)
         {
             float percent = float(reportingIndex) / 99.0f;
             size_t sampleCount = std::min(size_t(percent * float(c_numSamples)), c_numSamples - 1);
-            fprintf(file, "\"%i\"", (int)sampleCount+1);
+            fprintf(file, "\"%i\"", (int)sampleCount + 1);
             for (size_t sequenceIndex = 0; sequenceIndex < _countof(sequences); ++sequenceIndex)
                 fprintf(file, ",\"%f\"", std::sqrt(sequences[sequenceIndex].avgSquaredError[sampleCount]));
             fprintf(file, "\n");
@@ -234,6 +233,115 @@ int main(int argc, char** argv)
         // all done
         fclose(file);
     }
+}
+
+// this will return the <fibonacciIndex>th fibnonacci number - 1 numbers of samples
+void SortedGoldenRatioSequence(int fibonacciIndex)
+{
+    // Fibonacci index to Fibonacci number
+    // https://r-knott.surrey.ac.uk/Fibonacci/fibFormula.html
+    // This could (and show) be calculated or supplied before generating the sequence.
+    int fibonacciNumber = int(
+        (
+            std::pow(c_goldenRatio, float(fibonacciIndex + 2)) -
+            std::pow(-c_goldenRatioConjugate, float(fibonacciIndex + 2))
+        )
+        / sqrt(5.0f)
+    );
+
+    printf("Fib(%i) = %i\n", fibonacciIndex, fibonacciNumber);
+
+    // Calculate the large (A) and small (B) gaps between values
+    // https://en.wikipedia.org/wiki/Fibonacci_word#Other_properties
+    // in the talk about the unit circle and the golden angle
+    float stepBig = std::pow(c_goldenRatio, float(-fibonacciIndex));
+    float stepSmall = std::pow(c_goldenRatio, float(-fibonacciIndex - 1));
+
+    printf("Big = %f\nSmall = %f\n", stepBig, stepSmall);
+
+    // We will make <fibonacciNumber>-1 samples
+    float sample = 0.0f;
+    std::vector<float> samples;
+    std::vector<bool> fibonacciWord;
+    for (int sampleIndex = 1; sampleIndex <= fibonacciNumber; ++sampleIndex)
+    {     
+        // Calculate the <sampleIndex>th digit of the infinite Fibonacci word
+        // https://en.wikipedia.org/wiki/Fibonacci_word#Closed-form_expression_for_individual_digits
+        bool useSmallStep = int(
+            2.0f +
+            std::floor(float(sampleIndex) * c_goldenRatio) -
+            std::floor(float(sampleIndex + 1) * c_goldenRatio)
+            ) == 1;
+
+        samples.push_back(sample);
+        sample += useSmallStep ? stepSmall : stepBig;
+        fibonacciWord.push_back(useSmallStep);
+    }
+
+    // print out word
+    printf("  Word: ");
+    for (bool b : fibonacciWord)
+        printf(b ? "1" : "0");
+    printf("\n");
+
+    // print out sequence
+    printf("  Sorted Sequence:\n   ");
+    for (float sample : samples)
+        printf(" %0.3f", sample);
+    printf("\n");
+
+    // print out ground truth
+    printf("  Unsorted Sequence, sorted:\n   ");
+    std::vector<float> unsortedSamples;
+    sample = 0.0f;
+    for (size_t index = 0; index < samples.size(); ++index)
+    {
+        sample = std::fmod(sample + c_smallGoldenRatioConjugate, 1.0f);
+        unsortedSamples.push_back(sample);
+    }
+    std::sort(unsortedSamples.begin(), unsortedSamples.end());
+    for (size_t index = 0; index < unsortedSamples.size(); ++index)
+        printf(" %0.3f", unsortedSamples[index]);
+    printf("\n");
+
+    printf("  This Word: ");
+    for (size_t index = 0; index < unsortedSamples.size(); ++index)
+    {
+        float diff;
+        if (index + 1 < unsortedSamples.size())
+            diff = unsortedSamples[index + 1] - unsortedSamples[index];
+        else
+            diff = (1.0f + unsortedSamples[0]) - unsortedSamples[index];
+
+        float diffBig = std::abs(diff - stepBig);
+        float diffSmall = std::abs(diff - stepSmall);
+        printf(diffSmall < diffBig ? "1" : "0");
+
+        // TODO: temp?
+        float minDiff = std::min(diffBig, diffSmall);
+        if (minDiff > 0.0001)
+            printf("ERROR! midiff too large!");
+    }
+    printf("\n");
+
+    // Next
+    printf("\n");
+}
+
+int main(int argc, char** argv)
+{
+    //IntegrationTests();
+
+    // TODO: i think it's working now, but...
+    // 1) there are index differences between F_k and S_k.
+    // 2) The values are rotated i think (verify)
+    // TODO: fib(5) = 13 may not match! look into it.
+
+    // TODO: test hese samples in a convergence test for fibonacci counts of samples? with random offsets.
+    // TODO: make a nice simple function to generate these samples, that you call from the testing function
+
+    for (int i = 0; i < 7; ++i)
+        SortedGoldenRatioSequence(i);
 
 	return 0;
 }
