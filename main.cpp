@@ -94,10 +94,24 @@ std::vector<float> Sequence_GoldenRatioRandomOffset(size_t numSamples)
 }
 
 // This will return >= <numSamples> samples.
-std::vector<float> Sequence_FibonacciWordRandomOffset_Internal(size_t numSamples, float big)
+// big can be omitted but the "perfect" value given at https://en.wikipedia.org/wiki/Fibonacci_word#Other_properties
+// is 1 / (golden Ratio)^(k+1)
+// Where k is the fibonacci index of <numSamples>, assuming it is a fibonacci number.
+// you'll see k-1 in the formulas but that is because you need to add 2, due to
+// indexing differences between S_k (fibonacci word index) and F_k (fibonacci sequence).
+// For best results, you should also generate a random number between 0 and 1,
+// and add that number to every sample, then mod it with 1 to keep it between 0 and 1.
+// And of course, for BESTER results, you should use spatiotemporal blue noise
+// as the source of those random numbers, if this is a sequence used per pixel in
+// screen space.
+std::vector<float> Sequence_FibonacciWord(size_t numSamples, float big = 0.0f)
 {
     std::vector<float> ret;
     ret.reserve(numSamples); // Best guess for final sample count
+
+    // A good default value for big, if no value given.
+    if (big <= 0.0f)
+        big = 1.0f / float(numSamples);
 
     float small = big * c_goldenRatioConjugate;
 
@@ -105,11 +119,44 @@ std::vector<float> Sequence_FibonacciWordRandomOffset_Internal(size_t numSamples
     float sample = 0.0f;
     while (sample < 1.0f)
     {
+        ret.push_back(sample);
         run += c_goldenRatio;
         float shift = std::floor(run);
         run -= shift;
         sample += (shift == 1.0f) ? small : big;
-        ret.push_back(sample);
+    }
+
+    return ret;
+}
+
+std::vector<float> Sequence_FibonacciWordRandomOffset(size_t numSamples)
+{
+    size_t numSamplesOrig = numSamples;
+
+    // Generate the smallest number of samples we can, that are >= the number of samples we want.
+    // An iterative process unfortunately, but could be done in advance
+    std::vector<float> ret = Sequence_FibonacciWord(numSamples, 1.0f / float(numSamples));
+    int attemptCount = 1;
+    while (ret.size() > numSamplesOrig)
+    {
+        numSamples--;
+        if (numSamples <= 0)
+            break;
+        std::vector<float> temp = Sequence_FibonacciWord(numSamples, 1.0f / float(numSamples));
+        attemptCount++;
+        if (temp.size() < numSamplesOrig)
+            break;
+        ret = temp;
+    }
+
+    // truncate and normalize to handle any extra samples
+    // It very slightly improves the quality to do this.
+    if (ret.size() != numSamplesOrig)
+    {
+        float one = ret[numSamplesOrig];
+        ret.resize(numSamplesOrig);
+        for (float& f : ret)
+            f /= one;
     }
 
     // apply a random offset
@@ -121,26 +168,24 @@ std::vector<float> Sequence_FibonacciWordRandomOffset_Internal(size_t numSamples
     return ret;
 }
 
-std::vector<float> Sequence_FibonacciWordRandomOffset(size_t numSamples)
+std::vector<float> Sequence_FibonacciWordTruncateNormalizeRandomOffset(size_t numSamples)
 {
-    // TODO: n(F) = Floor[ Log(F Sqrt(5) + 1/2)/Log(Phi)]
-    // https://stackoverflow.com/a/5162856
+    // generate samples
+    std::vector<float> ret = Sequence_FibonacciWord(numSamples, 1.0f / float(numSamples));
+    if (ret.size() == numSamples)
+        return ret;
 
-    size_t numSamplesOrig = numSamples;
-    int attemptCount = 1;
-    std::vector<float> ret = Sequence_FibonacciWordRandomOffset_Internal(numSamples, 1.0f / float(numSamples));
+    // truncate and normalize
+    float one = ret[numSamples];
+    ret.resize(numSamples);
+    for (float& f : ret)
+        f /= one;
 
-    while (ret.size() > numSamplesOrig)
-    {
-        numSamples--;
-        if (numSamples <= 0)
-            break;
-        std::vector<float> temp = Sequence_FibonacciWordRandomOffset_Internal(numSamples, 1.0f / float(numSamples));
-        attemptCount++;
-        if (temp.size() < numSamplesOrig)
-            break;
-        ret = temp;
-    }
+    // apply a random offset
+    pcg32_random_t rng = GetRNG();
+    float offset = RandomFloat01(rng);
+    for (float& f : ret)
+        f = std::fmodf(f + offset, 1.0f);
 
     return ret;
 }
@@ -207,6 +252,9 @@ void IntegrationTests()
         //{"Regular", Sequence_Regular}, // The same each run so unfair to include it, and doesn't add any new info anyways
         //{"GoldenRatio", Sequence_GoldenRatio}, // The same each run so unfair to include it, and doesn't add any new info anyways
         //{"SmallGoldenRatioRandomOffset", Sequence_SmallGoldenRatioRandomOffset},  // 99.9% identical to GoldenRatioRandomOffset, omitting it
+
+        // Tried this as a way to get the number of samples desired without multiple attempts, but it wasn't competitive
+        //{"FibonacciWordTruncateNormalizeRandomOffset", Sequence_FibonacciWordTruncateNormalizeRandomOffset},
     };
 
     Function functions[] =
@@ -294,7 +342,7 @@ void SortedGoldenRatioSequenceTest(int fibonacciIndex)
 {
     // Fibonacci index to Fibonacci number
     // https://r-knott.surrey.ac.uk/Fibonacci/fibFormula.html
-    // This could (and show) be calculated or supplied before generating the sequence.
+    // This could (and should) be calculated or supplied before generating the sequence.
     // Note: The +2 is because there are differences in S_k and F_k. Example:
     // F_4 = 3 per this (https://en.wikipedia.org/wiki/Fibonacci_number)
     // S_4 = 01001010 = 8 (has 8 digits) per this https://en.wikipedia.org/wiki/Fibonacci_word#Other_properties
@@ -396,20 +444,8 @@ int main(int argc, char** argv)
 {
     IntegrationTests();
 
-    //auto blah = Sequence_FibonacciWordRandomOffset_Internal(5, c_goldenRatioConjugate);
-
-    // TODO: i think it's working now, but...
-    // 2) The values are rotated i think (verify)
-    // TODO: fib(5) = 13 may not match! look into it.
-
-    // TODO: test hese samples in a convergence test for fibonacci counts of samples? with random offsets.
-    // TODO: make a nice simple function to generate these samples, that you call from the testing function
-
-    //for (int i = 1; i < 7; ++i)
-    //    SortedGoldenRatioSequenceTest(i);
-
-    // TODO: graph # of attempts for the fibonacci word thing? maybe need to find the nearest fibonacci number? seems like something to solve or improve.
-
+    for (int i = 1; i < 7; ++i)
+        SortedGoldenRatioSequenceTest(i);
 
 	return 0;
 }
@@ -422,6 +458,9 @@ Blog:
 * Show the right way to do it, show that it works.
 * show your failed attempt and the things you found along the way
 * log/log plots are in out.
+* mention the truncation and renormalization of fib word. could show a graph of how it improves things.
+  * could also show that the number of attempts increase as the number of samples gets larger. could show a graph.
+  * there is probably a better way to make an initial guess for "big" step, like maybe multiply by golden ratio. This can be precomptued though so :shrug:
 
 1d function analysis...
 * uniform white noise is not a great choice unsurprisingly
