@@ -93,6 +93,58 @@ std::vector<float> Sequence_GoldenRatioRandomOffset(size_t numSamples)
     return ret;
 }
 
+// This will return >= <numSamples> samples.
+std::vector<float> Sequence_FibonacciWordRandomOffset_Internal(size_t numSamples, float big)
+{
+    std::vector<float> ret;
+    ret.reserve(numSamples); // Best guess for final sample count
+
+    float small = big * c_goldenRatioConjugate;
+
+    float run = c_goldenRatioConjugate;
+    float sample = 0.0f;
+    while (sample < 1.0f)
+    {
+        run += c_goldenRatio;
+        float shift = std::floor(run);
+        run -= shift;
+        sample += (shift == 1.0f) ? small : big;
+        ret.push_back(sample);
+    }
+
+    // apply a random offset
+    pcg32_random_t rng = GetRNG();
+    float offset = RandomFloat01(rng);
+    for (float& f : ret)
+        f = std::fmodf(f + offset, 1.0f);
+
+    return ret;
+}
+
+std::vector<float> Sequence_FibonacciWordRandomOffset(size_t numSamples)
+{
+    // TODO: n(F) = Floor[ Log(F Sqrt(5) + 1/2)/Log(Phi)]
+    // https://stackoverflow.com/a/5162856
+
+    size_t numSamplesOrig = numSamples;
+    int attemptCount = 1;
+    std::vector<float> ret = Sequence_FibonacciWordRandomOffset_Internal(numSamples, 1.0f / float(numSamples));
+
+    while (ret.size() > numSamplesOrig)
+    {
+        numSamples--;
+        if (numSamples <= 0)
+            break;
+        std::vector<float> temp = Sequence_FibonacciWordRandomOffset_Internal(numSamples, 1.0f / float(numSamples));
+        attemptCount++;
+        if (temp.size() < numSamplesOrig)
+            break;
+        ret = temp;
+    }
+
+    return ret;
+}
+
 std::vector<float> Sequence_SmallGoldenRatioRandomOffset(size_t numSamples)
 {
     pcg32_random_t rng = GetRNG();
@@ -147,11 +199,13 @@ void IntegrationTests()
     Sequence sequences[] =
     {
         {"Uniform", Sequence_WhiteNoise},
-        //{"Regular", Sequence_Regular},
         {"RegularRandomOffset", Sequence_RegularRandomoffset},
         {"Stratified", Sequence_Stratified},
-        //{"GoldenRatio", Sequence_GoldenRatio},
         {"GoldenRatioRandomOffset", Sequence_GoldenRatioRandomOffset},
+        {"FibonacciWordRandomOffset", Sequence_FibonacciWordRandomOffset},
+
+        //{"Regular", Sequence_Regular}, // The same each run so unfair to include it, and doesn't add any new info anyways
+        //{"GoldenRatio", Sequence_GoldenRatio}, // The same each run so unfair to include it, and doesn't add any new info anyways
         //{"SmallGoldenRatioRandomOffset", Sequence_SmallGoldenRatioRandomOffset},  // 99.9% identical to GoldenRatioRandomOffset, omitting it
     };
 
@@ -236,11 +290,15 @@ void IntegrationTests()
 }
 
 // this will return the <fibonacciIndex>th fibnonacci number - 1 numbers of samples
-void SortedGoldenRatioSequence(int fibonacciIndex)
+void SortedGoldenRatioSequenceTest(int fibonacciIndex)
 {
     // Fibonacci index to Fibonacci number
     // https://r-knott.surrey.ac.uk/Fibonacci/fibFormula.html
     // This could (and show) be calculated or supplied before generating the sequence.
+    // Note: The +2 is because there are differences in S_k and F_k. Example:
+    // F_4 = 3 per this (https://en.wikipedia.org/wiki/Fibonacci_number)
+    // S_4 = 01001010 = 8 (has 8 digits) per this https://en.wikipedia.org/wiki/Fibonacci_word#Other_properties
+    // F_6 = 8, so S_k = F_(k+2)
     int fibonacciNumber = int(
         (
             std::pow(c_goldenRatio, float(fibonacciIndex + 2)) -
@@ -263,7 +321,8 @@ void SortedGoldenRatioSequence(int fibonacciIndex)
     float sample = 0.0f;
     std::vector<float> samples;
     std::vector<bool> fibonacciWord;
-    for (int sampleIndex = 1; sampleIndex <= fibonacciNumber; ++sampleIndex)
+    float run = c_goldenRatio - std::floor(c_goldenRatio);
+    for (int sampleIndex = 1; sampleIndex <= fibonacciNumber + 1; ++sampleIndex)
     {     
         // Calculate the <sampleIndex>th digit of the infinite Fibonacci word
         // https://en.wikipedia.org/wiki/Fibonacci_word#Closed-form_expression_for_individual_digits
@@ -272,6 +331,16 @@ void SortedGoldenRatioSequence(int fibonacciIndex)
             std::floor(float(sampleIndex) * c_goldenRatio) -
             std::floor(float(sampleIndex + 1) * c_goldenRatio)
             ) == 1;
+
+        // alternate method for calculating word
+        run += c_goldenRatio;
+        float shift = std::floor(run);
+        run -= shift;
+
+        // an alternate method to calculate the infinite fibonacci word
+        bool useSmallStep2 = (shift == 1.0f);
+        if (useSmallStep != useSmallStep2)
+            printf("ERROR! useSmallStep != useSmallStep2!\n");
 
         samples.push_back(sample);
         sample += useSmallStep ? stepSmall : stepBig;
@@ -316,11 +385,6 @@ void SortedGoldenRatioSequence(int fibonacciIndex)
         float diffBig = std::abs(diff - stepBig);
         float diffSmall = std::abs(diff - stepSmall);
         printf(diffSmall < diffBig ? "1" : "0");
-
-        // TODO: temp?
-        float minDiff = std::min(diffBig, diffSmall);
-        if (minDiff > 0.0001)
-            printf("ERROR! midiff too large!");
     }
     printf("\n");
 
@@ -330,18 +394,22 @@ void SortedGoldenRatioSequence(int fibonacciIndex)
 
 int main(int argc, char** argv)
 {
-    //IntegrationTests();
+    IntegrationTests();
+
+    //auto blah = Sequence_FibonacciWordRandomOffset_Internal(5, c_goldenRatioConjugate);
 
     // TODO: i think it's working now, but...
-    // 1) there are index differences between F_k and S_k.
     // 2) The values are rotated i think (verify)
     // TODO: fib(5) = 13 may not match! look into it.
 
     // TODO: test hese samples in a convergence test for fibonacci counts of samples? with random offsets.
     // TODO: make a nice simple function to generate these samples, that you call from the testing function
 
-    for (int i = 0; i < 7; ++i)
-        SortedGoldenRatioSequence(i);
+    //for (int i = 1; i < 7; ++i)
+    //    SortedGoldenRatioSequenceTest(i);
+
+    // TODO: graph # of attempts for the fibonacci word thing? maybe need to find the nearest fibonacci number? seems like something to solve or improve.
+
 
 	return 0;
 }
