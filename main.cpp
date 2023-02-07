@@ -93,6 +93,37 @@ std::vector<float> Sequence_GoldenRatioRandomOffset(size_t numSamples)
     return ret;
 }
 
+template <size_t base>
+std::vector<float> Sequence_VanDerCorputRandomOffset(size_t numSamples)
+{
+    pcg32_random_t rng = GetRNG();
+    float offset = RandomFloat01(rng);
+    std::vector<float> ret(numSamples);
+    for (size_t i = 0; i < numSamples; ++i)
+    {
+        ret[i] = 0.0f;
+        float denominator = float(base);
+        size_t n = i;
+        while (n > 0)
+        {
+            size_t multiplier = n % base;
+            ret[i] += float(multiplier) / denominator;
+            n = n / base;
+            denominator *= float(base);
+        }
+        ret[i] = std::fmod(ret[i] + offset, 1.0f);
+    }
+    return ret;
+}
+
+float FibonacciWordSequenceNext(float last, float big, float small, float& run)
+{
+    run += c_goldenRatio;
+    float shift = std::floor(run);
+    run -= shift;
+    return last + ((shift == 1.0f) ? small : big);
+}
+
 // This will return >= <numSamples> samples.
 // big can be omitted but the "perfect" value given at https://en.wikipedia.org/wiki/Fibonacci_word#Other_properties
 // is 1 / (golden Ratio)^(k+1)
@@ -120,10 +151,7 @@ std::vector<float> Sequence_FibonacciWord(size_t numSamples, float big = 0.0f)
     while (sample < 1.0f)
     {
         ret.push_back(sample);
-        run += c_goldenRatio;
-        float shift = std::floor(run);
-        run -= shift;
-        sample += (shift == 1.0f) ? small : big;
+        sample = FibonacciWordSequenceNext(sample, big, small, run);
     }
 
     return ret;
@@ -167,6 +195,7 @@ std::vector<float> Sequence_FibonacciWordRandomOffset(size_t numSamples)
 
     return ret;
 }
+
 
 std::vector<float> Sequence_FibonacciWordTruncateNormalizeRandomOffset(size_t numSamples)
 {
@@ -248,6 +277,9 @@ void IntegrationTests()
         {"Stratified", Sequence_Stratified},
         {"GoldenRatioRandomOffset", Sequence_GoldenRatioRandomOffset},
         {"FibonacciWordRandomOffset", Sequence_FibonacciWordRandomOffset},
+
+        //{"VDC(2)RandomOffset", Sequence_VanDerCorputRandomOffset<2>}, // Omitting because it clutters the graphs!
+        //{"VDC(3)RandomOffset", Sequence_VanDerCorputRandomOffset<3>}, // Pretty much same performance as <2>
 
         //{"Regular", Sequence_Regular}, // The same each run so unfair to include it, and doesn't add any new info anyways
         //{"GoldenRatio", Sequence_GoldenRatio}, // The same each run so unfair to include it, and doesn't add any new info anyways
@@ -449,29 +481,3 @@ int main(int argc, char** argv)
 
 	return 0;
 }
-
-/*
-Blog:
-* show the functions too. have google or wolfram graph em.
-* NOTE: csv has root mean squared error, per this blog post: https://blog.demofox.org/2021/04/01/mean-squared-error-is-variance/
-* motivation: golden ratio is better sampling. having it in sorted order is better for cache, and better for ray marching, to composite things properly.
-* Show the right way to do it, show that it works.
-* show your failed attempt and the things you found along the way
-* log/log plots are in out.
-* mention the truncation and renormalization of fib word. could show a graph of how it improves things.
-  * could also show that the number of attempts increase as the number of samples gets larger. could show a graph.
-  * there is probably a better way to make an initial guess for "big" step, like maybe multiply by golden ratio. This can be precomptued though so :shrug:
-
-1d function analysis...
-* uniform white noise is not a great choice unsurprisingly
-* regular sampling is ok, but has aliasing problems.
- * stratified converges at about the same rate but doesn't have the aliasing problems.
- * Random offset regular sampling isn't bad. it seems to beat stratified?? except in step
-* random offset golden ratio is good. 
-* step function makes golden ratio and regular sampling go nuts.
- * these functions are deterministic though so aren't getting anything from averaging a bunch of runs.
-
-! regular with a random offset is pretty decent! motivation for using blue noise that way.
-! removing "golden ratio" and "uniform" because they are cluttery and don't really belong, not a fair test.
-
-*/
