@@ -124,28 +124,16 @@ float FibonacciWordSequenceNext(float last, float big, float small, float& run)
     return last + ((shift == 1.0f) ? small : big);
 }
 
-// This will return >= <numSamples> samples.
-// big can be omitted but the "perfect" value given at https://en.wikipedia.org/wiki/Fibonacci_word#Other_properties
-// is 1 / (golden Ratio)^(k+1)
-// Where k is the fibonacci index of <numSamples>, assuming it is a fibonacci number.
-// you'll see k-1 in the formulas but that is because you need to add 2, due to
-// indexing differences between S_k (fibonacci word index) and F_k (fibonacci sequence).
+// Based on info at https://en.wikipedia.org/wiki/Fibonacci_word
 // For best results, you should also generate a random number between 0 and 1,
 // and add that number to every sample, then mod it with 1 to keep it between 0 and 1.
 // And of course, for BESTER results, you should use spatiotemporal blue noise
 // as the source of those random numbers, if this is a sequence used per pixel in
 // screen space.
-std::vector<float> Sequence_FibonacciWord(size_t numSamples, float big = 0.0f)
+std::vector<float> Sequence_FibonacciWord(float big)
 {
     std::vector<float> ret;
-    ret.reserve(numSamples); // Best guess for final sample count
-
-    // A good default value for big, if no value given.
-    if (big <= 0.0f)
-        big = 1.0f / float(numSamples);
-
     float small = big * c_goldenRatioConjugate;
-
     float run = c_goldenRatioConjugate;
     float sample = 0.0f;
     while (sample < 1.0f)
@@ -153,6 +141,58 @@ std::vector<float> Sequence_FibonacciWord(size_t numSamples, float big = 0.0f)
         ret.push_back(sample);
         sample = FibonacciWordSequenceNext(sample, big, small, run);
     }
+    return ret;
+}
+
+std::vector<float> Sequence_FibonacciWordRandomOffset2(size_t numSamples)
+{
+    static const float c_samplesConstant = (c_goldenRatio + 1.0f) / (2.0f * c_goldenRatio - 1.0f);
+    float big = c_samplesConstant / float(numSamples);
+    std::vector<float> ret = Sequence_FibonacciWord(big);
+
+    // truncate and normalize to handle any extra samples
+    // It very slightly improves the quality to do this.
+    if (ret.size() > numSamples)
+    {
+        float one = ret[numSamples];
+        ret.resize(numSamples);
+        for (float& f : ret)
+            f /= one;
+    }
+
+    // apply a random offset
+    pcg32_random_t rng = GetRNG();
+    float offset = RandomFloat01(rng);
+    for (float& f : ret)
+        f = std::fmodf(f + offset, 1.0f);
+
+    return ret;
+}
+
+std::vector<float> Sequence_FibonacciWordRandomOffset3(size_t numSamples)
+{
+    static const float c_samplesMultiplier = (2.0f * c_goldenRatio - 1.0f) / (c_goldenRatio + 1.0f);
+
+    int modifiedNumSamples = int(float(numSamples) * c_samplesMultiplier + 0.5f);
+
+    float big = 1.0f / float(modifiedNumSamples);
+    std::vector<float> ret = Sequence_FibonacciWord(big);
+
+    // truncate and normalize to handle any extra samples
+    // It very slightly improves the quality to do this.
+    if (ret.size() > numSamples)
+    {
+        float one = ret[numSamples];
+        ret.resize(numSamples);
+        for (float& f : ret)
+            f /= one;
+    }
+
+    // apply a random offset
+    pcg32_random_t rng = GetRNG();
+    float offset = RandomFloat01(rng);
+    for (float& f : ret)
+        f = std::fmodf(f + offset, 1.0f);
 
     return ret;
 }
@@ -163,14 +203,14 @@ std::vector<float> Sequence_FibonacciWordRandomOffset(size_t numSamples)
 
     // Generate the smallest number of samples we can, that are >= the number of samples we want.
     // An iterative process unfortunately, but could be done in advance
-    std::vector<float> ret = Sequence_FibonacciWord(numSamples, 1.0f / float(numSamples));
+    std::vector<float> ret = Sequence_FibonacciWord(1.0f / float(numSamples));
     int attemptCount = 1;
     while (ret.size() > numSamplesOrig)
     {
         numSamples--;
         if (numSamples <= 0)
             break;
-        std::vector<float> temp = Sequence_FibonacciWord(numSamples, 1.0f / float(numSamples));
+        std::vector<float> temp = Sequence_FibonacciWord(1.0f / float(numSamples));
         attemptCount++;
         if (temp.size() < numSamplesOrig)
             break;
@@ -200,7 +240,7 @@ std::vector<float> Sequence_FibonacciWordRandomOffset(size_t numSamples)
 std::vector<float> Sequence_FibonacciWordTruncateNormalizeRandomOffset(size_t numSamples)
 {
     // generate samples
-    std::vector<float> ret = Sequence_FibonacciWord(numSamples, 1.0f / float(numSamples));
+    std::vector<float> ret = Sequence_FibonacciWord(1.0f / float(numSamples));
     if (ret.size() == numSamples)
         return ret;
 
@@ -277,6 +317,10 @@ void IntegrationTests()
         {"Stratified", Sequence_Stratified},
         {"GoldenRatioRandomOffset", Sequence_GoldenRatioRandomOffset},
         {"FibonacciWordRandomOffset", Sequence_FibonacciWordRandomOffset},
+
+        // Other methods for getting the right number of sample points
+        //{"FibonacciWordRandomOffset2", Sequence_FibonacciWordRandomOffset2},
+        //{"FibonacciWordRandomOffset3", Sequence_FibonacciWordRandomOffset3},
 
         //{"VDC(2)RandomOffset", Sequence_VanDerCorputRandomOffset<2>}, // Omitting because it clutters the graphs!
         //{"VDC(3)RandomOffset", Sequence_VanDerCorputRandomOffset<3>}, // Pretty much same performance as <2>
@@ -478,6 +522,32 @@ int main(int argc, char** argv)
 
     for (int i = 1; i < 7; ++i)
         SortedGoldenRatioSequenceTest(i);
+
+    // Testing methods for getting the right number of sample counts more easily.
+    {
+        int sampleCounts[] =
+        {
+            1,2,3,4,5,6,7,8,9,10,256,512,1024,4096
+        };
+
+        static const float c_samplesConstant = (c_goldenRatio + 1.0f) / (2.0f * c_goldenRatio - 1.0f);
+
+        for (size_t i = 0; i < _countof(sampleCounts); ++i)
+        {
+
+            // Method 2 - calculate a "big" value that will get us close to the desired sample count
+            int numSamples = sampleCounts[i];
+            float big = c_samplesConstant / float(numSamples);
+            auto samples = Sequence_FibonacciWord(big);
+            printf("Method 2) %i : %i  (%i) big = %f\n", numSamples, (int)samples.size(), ((int)samples.size()) - numSamples, big);
+
+            // Method 3 - calculate a modified sample count that will get us close to the desired sample count
+            static const float c_samplesMultiplier = (2.0f * c_goldenRatio - 1.0f) / (c_goldenRatio + 1.0f);
+            int modifiedNumSamples = int(float(numSamples) * c_samplesMultiplier + 0.5f);
+            samples = Sequence_FibonacciWord(1.0f / modifiedNumSamples);
+            printf("Method 3) %i : %i  (%i) big = %f\n", numSamples, (int)samples.size(), ((int)samples.size()) - numSamples, big);
+        }
+    }
 
 	return 0;
 }
