@@ -24,5 +24,7 @@ for fileName in fileNames:
     fig.axes[0].get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
     fig.axes[0].get_yaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
 
+    fig.axes[0].set_xlim([1, 100])
+
     fig.tight_layout()
     fig.savefig("out/" + fileName + ".png", bbox_inches='tight')

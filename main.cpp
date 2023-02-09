@@ -144,6 +144,52 @@ std::vector<float> Sequence_FibonacciWord(float big)
     return ret;
 }
 
+std::vector<float> Sequence_FibonacciWordNumSamples(size_t numSamples)
+{
+    size_t numSamplesOrig = numSamples;
+
+    // Generate the smallest number of samples we can, that are >= the number of samples we want.
+    // An iterative process unfortunately, but could be done in advance
+    std::vector<float> ret = Sequence_FibonacciWord(1.0f / float(numSamples));
+    int attemptCount = 1;
+    while (ret.size() > numSamplesOrig)
+    {
+        numSamples--;
+        if (numSamples <= 0)
+            break;
+        std::vector<float> temp = Sequence_FibonacciWord(1.0f / float(numSamples));
+        attemptCount++;
+        if (temp.size() < numSamplesOrig)
+            break;
+        ret = temp;
+    }
+
+    // truncate and normalize to handle any extra samples
+    // It very slightly improves the quality to do this.
+    if (ret.size() != numSamplesOrig)
+    {
+        float one = ret[numSamplesOrig];
+        ret.resize(numSamplesOrig);
+        for (float& f : ret)
+            f /= one;
+    }
+
+    return ret;
+}
+
+std::vector<float> Sequence_FibonacciWordRandomOffset(size_t numSamples)
+{
+    std::vector<float> ret = Sequence_FibonacciWordNumSamples(numSamples);
+
+    // apply a random offset
+    pcg32_random_t rng = GetRNG();
+    float offset = RandomFloat01(rng);
+    for (float& f : ret)
+        f = std::fmodf(f + offset, 1.0f);
+
+    return ret;
+}
+
 std::vector<float> Sequence_FibonacciWordRandomOffset2(size_t numSamples)
 {
     static const float c_samplesConstant = (c_goldenRatio + 1.0f) / (2.0f * c_goldenRatio - 1.0f);
@@ -197,45 +243,59 @@ std::vector<float> Sequence_FibonacciWordRandomOffset3(size_t numSamples)
     return ret;
 }
 
-std::vector<float> Sequence_FibonacciWordRandomOffset(size_t numSamples)
+std::vector<float> Sequence_FibonacciWordRandomOffset4(size_t numSamples)
 {
-    size_t numSamplesOrig = numSamples;
+    // Note: only really need the COUNT.
+    // This could be implemented more efficiently if you already know that in advance, like you should at runtime of a game
+    std::vector<float> samples = Sequence_FibonacciWordNumSamples(numSamples);
 
-    // Generate the smallest number of samples we can, that are >= the number of samples we want.
-    // An iterative process unfortunately, but could be done in advance
-    std::vector<float> ret = Sequence_FibonacciWord(1.0f / float(numSamples));
-    int attemptCount = 1;
-    while (ret.size() > numSamplesOrig)
-    {
-        numSamples--;
-        if (numSamples <= 0)
-            break;
-        std::vector<float> temp = Sequence_FibonacciWord(1.0f / float(numSamples));
-        attemptCount++;
-        if (temp.size() < numSamplesOrig)
-            break;
-        ret = temp;
-    }
-
-    // truncate and normalize to handle any extra samples
-    // It very slightly improves the quality to do this.
-    if (ret.size() != numSamplesOrig)
-    {
-        float one = ret[numSamplesOrig];
-        ret.resize(numSamplesOrig);
-        for (float& f : ret)
-            f /= one;
-    }
-
-    // apply a random offset
+    // choose a random place in the sequence as the new location for zero.
+    // The gap size between the indices isn't uniform, but is actually one of two
+    // gap sizes, so choosing the indices uniform randomly isn't 100% right but may be good enough.
     pcg32_random_t rng = GetRNG();
-    float offset = RandomFloat01(rng);
-    for (float& f : ret)
-        f = std::fmodf(f + offset, 1.0f);
+    float rand01 = RandomFloat01(rng);
+
+#if 0
+    // Scan the sequence to find where the zero location is to base the rest of the sequence off of
+    // Note: we are assuming there is a value of 0.0 as the first sample
+    int zeroLocationI = 0;
+    while (zeroLocationI < samples.size() - 1 && rand01 > samples[zeroLocationI + 1])
+        zeroLocationI++;
+    float zeroLocationFract = -(rand01 - samples[zeroLocationI]);
+
+#else
+    // Choose a random index and use the fractional part as the percentage to the next index
+    float zeroLocationF = rand01 * float(samples.size());
+    if (zeroLocationF >= float(samples.size()))
+        zeroLocationF = 0.0f;
+
+    // Turn that random location into an index and an offset value from that index that is less
+    // than the value at the next index.
+    // This is the "zero" of the sequence.
+    // The fractional part is subtracted from each sample.
+    int zeroLocationI = int(zeroLocationF);
+    float zeroLocationGap = std::fmod(1.0f + samples[(zeroLocationI + 1) % samples.size()] - samples[zeroLocationI], 1.0f);
+    float zeroLocationFract = -(zeroLocationF - float(zeroLocationI)) * zeroLocationGap;
+#endif
+
+    // make the sequence again, being relative to the zero location we found
+    std::vector<float> ret(samples.size());
+    float sample = zeroLocationFract;
+
+    for (size_t destIndex = 0; destIndex < samples.size(); ++destIndex)
+    {
+        // calculate the gap to the next sample, properly handling index roll over
+        size_t srcIndex = (destIndex + zeroLocationI) % samples.size();
+        size_t nextSrcIndex = (destIndex + zeroLocationI + 1) % samples.size();
+        float gap = std::fmod(1.0f + samples[nextSrcIndex] - samples[srcIndex], 1.0f);
+
+        // add the gap to the sample, and store it
+        sample = std::fmod(sample + gap + 1.0f, 1.0f);
+        ret[destIndex] = sample;
+    }
 
     return ret;
 }
-
 
 std::vector<float> Sequence_FibonacciWordTruncateNormalizeRandomOffset(size_t numSamples)
 {
@@ -318,6 +378,8 @@ void IntegrationTests()
         {"GoldenRatioRandomOffset", Sequence_GoldenRatioRandomOffset},
         {"FibonacciWordRandomOffset", Sequence_FibonacciWordRandomOffset},
 
+        //{"Sequence_FibonacciWordRandomOffset4", Sequence_FibonacciWordRandomOffset4},  // nearly the same as Sequence_FibonacciWordRandomOffset, not worth showing.
+
         // Other methods for getting the right number of sample points
         //{"FibonacciWordRandomOffset2", Sequence_FibonacciWordRandomOffset2},
         //{"FibonacciWordRandomOffset3", Sequence_FibonacciWordRandomOffset3},
@@ -368,9 +430,9 @@ void IntegrationTests()
                     // generate the samples
                     sequences[sequenceIndex].sequence = sequences[sequenceIndex].fn(sampleCount + 1);
 
-                    // integrate
+                    // integrate y
                     float y = 0.0f;
-                    for (size_t index = 0; index < sampleCount; ++index)
+                    for (size_t index = 0; index < sampleCount + 1; ++index)
                     {
                         float x = sequences[sequenceIndex].sequence[index];
                         y = Lerp(y, functions[functionIndex].fn(x), 1.0f / float(index + 1));
